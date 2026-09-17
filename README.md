@@ -16,6 +16,9 @@
    - **EXIF / 元数据**：编辑软件痕迹、缺少相机字段、时间戳异常（Pillow）
    - **ELA**：JPEG 重压缩差异热力图与异常分
    - **噪声 / 残差**：分块高频残差一致性
+   - **截图特征**：平坦色块 / 有限调色板 / 水平文字带，用于切换「截图模式」融合权重
+   - **界面文字局部一致性**：黑色文字抗锯齿（ClearType vs 灰度）、列间 AA 不一致、邻域背景微残差（针对表格/网页截图改数字）
+   - **重采样 / 双渲染痕迹**：平坦单元格内孤立高频岛、边缘振铃
 
 ## 环境要求
 
@@ -60,7 +63,7 @@ python scripts/self_check.py
 也可：
 
 ```bat
-python -m unittest tests.test_analysis_smoke -v
+python -m unittest tests.test_analysis_smoke tests.test_ui_screenshot_fixtures -v
 ```
 
 ## 使用 PyInstaller 打包（Windows）
@@ -101,12 +104,17 @@ image-forensics/
       exif_check.py
       ela_check.py
       noise_check.py
+      screenshot_check.py
+      ui_text_check.py
+      ui_resample_check.py
     ui/
       main_window.py      # customtkinter / tkinter GUI
   scripts/
     self_check.py
   tests/
     test_analysis_smoke.py
+    test_ui_screenshot_fixtures.py
+    fixtures/
 ```
 
 ## 方法局限（请务必阅读）
@@ -115,7 +123,7 @@ image-forensics/
 |------|------|
 | 非司法级 | 无机器学习模型训练语料背书，亦无相机指纹（PRNU）等专业手段 |
 | 社交平台转码 | 微信/微博等会剥离 EXIF 并重压缩，易被判为「不确定」或偏加工 |
-| PNG / 截图 | 本身常无相机 EXIF；ELA 对非 JPEG 参考价值有限 |
+| PNG / 截图 | 本身常无相机 EXIF；ELA 对非 JPEG 参考价值有限；已增加截图模式与界面文字一致性检测 |
 | 生成式 AI | 未专门检测扩散模型伪影；噪声项仅作弱信号 |
 | 误报 / 漏报 | 重度锐化、美颜、滤镜可能抬高风险；精心处理的伪造也可能偏低 |
 | 置信度含义 | 表示「当前规则下标签的相对把握」，不是统计显著性 |

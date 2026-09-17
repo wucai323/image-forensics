@@ -117,10 +117,6 @@ def check_ela(
         peak_ratio = (max_d / mean_d) if mean_d > 1e-6 else 1.0
         score += min(0.25, max(0.0, (peak_ratio - 6.0) * 0.04))
 
-        if not applicable:
-            findings.append("非 JPEG 格式：ELA 参考价值有限，已按弱信号计入")
-            score *= 0.55
-
         if block_cv < 0.22 and hotspot_ratio < 1.35:
             findings.append(
                 f"ELA 空间分布较均匀（块 CV={block_cv:.2f}, 热点比={hotspot_ratio:.2f}），"
@@ -131,12 +127,18 @@ def check_ela(
                 f"ELA 存在局部高差异区域（块 CV={block_cv:.2f}, 热点比={hotspot_ratio:.2f}），"
                 "可能经历局部编辑或来源不一致的拼贴"
             )
-            score = max(score, 0.55)
+            if applicable:
+                score = max(score, 0.55)
         else:
             findings.append(
                 f"ELA 轻度空间不均（均值={mean_d:.2f}, 块 CV={block_cv:.2f}, "
                 f"热点比={hotspot_ratio:.2f}），可能经过局部处理或混合压缩"
             )
+
+        # Down-weight after floor so non-JPEG cannot re-inflate via max(..., 0.55)
+        if not applicable:
+            findings.insert(0, "非 JPEG 格式：ELA 参考价值有限，已按弱信号计入")
+            score *= 0.55
 
         score = max(0.0, min(1.0, score))
         return ElaCheckResult(

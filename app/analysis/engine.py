@@ -11,6 +11,9 @@ from PIL import Image
 from app.analysis.ela_check import ElaCheckResult, check_ela
 from app.analysis.exif_check import ExifCheckResult, check_exif
 from app.analysis.noise_check import NoiseCheckResult, check_noise
+from app.analysis.screenshot_check import ScreenshotCheckResult, check_screenshot
+from app.analysis.ui_resample_check import UiResampleCheckResult, check_ui_resample
+from app.analysis.ui_text_check import UiTextCheckResult, check_ui_text
 
 
 VERDICT_LIKELY_ORIGINAL = "可能原图"
@@ -57,7 +60,11 @@ class AnalysisResult:
                     "name": c.name,
                     "score": c.score,
                     "findings": c.findings,
-                    "extras": {k: v for k, v in c.extras.items() if not hasattr(v, "size")},
+                    "extras": {
+                        k: v
+                        for k, v in c.extras.items()
+                        if not hasattr(v, "size")
+                    },
                 }
                 for c in self.checks
             ],
@@ -69,22 +76,22 @@ def _decide_verdict(risk: float) -> tuple[str, float, str]:
     """Map overall risk to Chinese verdict + confidence + short explanation."""
     if risk < 0.32:
         verdict = VERDICT_LIKELY_ORIGINAL
-        # confidence grows as risk goes toward 0
         confidence = min(0.9, 0.55 + (0.32 - risk) * 1.1)
         explanation = (
             "各项启发式指标总体偏低，未发现强烈的编辑软件痕迹、"
-            "ELA 局部异常或噪声分布明显不一致，更接近未经明显数字加工的图像。"
+            "ELA 局部异常、噪声分布明显不一致或界面文字局部异常，"
+            "更接近未经明显数字加工的图像。"
         )
     elif risk > 0.55:
         verdict = VERDICT_LIKELY_TAMPERED
         confidence = min(0.9, 0.55 + (risk - 0.55) * 1.0)
         explanation = (
-            "多项指标偏高（如元数据编辑痕迹、ELA 残差异常或区块噪声不一致），"
+            "多项指标偏高（如元数据编辑痕迹、ELA 残差异常、"
+            "界面文字抗锯齿/局部残差不一致或重采样痕迹），"
             "提示图像可能经过重保存、局部编辑或其他数字处理。"
         )
     else:
         verdict = VERDICT_UNCERTAIN
-        # peak uncertainty around mid risk
         confidence = 0.45 + abs(risk - 0.43) * 0.3
         confidence = min(0.7, confidence)
         explanation = (
@@ -102,7 +109,6 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
 
     with Image.open(path) as img:
         img.load()
-        # Keep a copy for preview / checks that need pixel data after close
         working = img.copy()
         working.format = img.format  # type: ignore[attr-defined]
         preview = working.copy()
@@ -112,16 +118,38 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
         exif_r: ExifCheckResult = check_exif(path, working)
         ela_r: ElaCheckResult = check_ela(path, working)
         noise_r: NoiseCheckResult = check_noise(path, working)
+        shot_r: ScreenshotCheckResult = check_screenshot(path, working)
+        ui_r: UiTextCheckResult = check_ui_text(
+            path, working, screenshot_likeness=shot_r.score
+        )
+        rs_r: UiResampleCheckResult = check_ui_resample(
+            path, working, screenshot_likeness=shot_r.score
+        )
 
-    # Weighted fusion — ELA & noise matter more for visual tampering;
-    # EXIF is strong when editing software is present but weak alone for stripped files
-    w_exif, w_ela, w_noise = 0.28, 0.40, 0.32
+    # Screenshot-aware fusion:
+    # For UI screenshots, classic photo ELA/EXIF are weak; up-weight local
+    # text AA / patch consistency and resample cues.
+    if shot_r.is_screenshot or shot_r.score >= 0.50:
+        # Emphasize UI-local cues; keep a little ELA/noise for splice signals
+        w_exif, w_ela, w_noise = 0.08, 0.12, 0.12
+        w_ui, w_rs = 0.50, 0.18
+        fusion_note = "截图模式：下调 ELA/EXIF 权重，上调界面文字一致性与重采样检测"
+    else:
+        w_exif, w_ela, w_noise = 0.26, 0.34, 0.28
+        w_ui, w_rs = 0.06, 0.06
+        fusion_note = "照片模式：以 EXIF / ELA / 噪声为主，界面项弱权重"
+
     overall = (
-        w_exif * exif_r.score + w_ela * ela_r.score + w_noise * noise_r.score
+        w_exif * exif_r.score
+        + w_ela * ela_r.score
+        + w_noise * noise_r.score
+        + w_ui * ui_r.score
+        + w_rs * rs_r.score
     )
     overall = float(max(0.0, min(1.0, overall)))
 
     verdict, confidence, explanation = _decide_verdict(overall)
+    explanation = fusion_note + "。" + explanation
 
     checks = [
         CheckDetail(
@@ -149,6 +177,40 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
             extras={
                 "global_noise": round(noise_r.global_noise, 3),
                 "block_cv": round(noise_r.block_cv, 3),
+            },
+        ),
+        CheckDetail(
+            name="截图特征",
+            score=shot_r.score,
+            findings=shot_r.findings,
+            extras={
+                "flat_frac": round(shot_r.flat_frac, 3),
+                "color_count_est": shot_r.color_count_est,
+                "edge_band_density": round(shot_r.edge_band_density, 3),
+                "is_screenshot": shot_r.is_screenshot,
+            },
+        ),
+        CheckDetail(
+            name="界面文字局部一致性",
+            score=ui_r.score,
+            findings=ui_r.findings,
+            extras={
+                "gray_aa_frac": round(ui_r.gray_aa_frac, 3),
+                "cleartype_frac": round(ui_r.cleartype_frac, 3),
+                "aa_strip_cv": round(ui_r.aa_strip_cv, 3),
+                "peer_sharp_cv": round(ui_r.peer_sharp_cv, 3),
+                "bg_residue_cv": round(ui_r.bg_residue_cv, 3),
+                "rgba_opaque": ui_r.rgba_opaque,
+            },
+        ),
+        CheckDetail(
+            name="重采样 / 双渲染痕迹",
+            score=rs_r.score,
+            findings=rs_r.findings,
+            extras={
+                "island_rate": round(rs_r.island_rate, 3),
+                "ring_score": round(rs_r.ring_score, 3),
+                "hf_cv": round(rs_r.hf_cv, 3),
             },
         ),
     ]

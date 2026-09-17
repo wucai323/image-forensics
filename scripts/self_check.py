@@ -109,6 +109,44 @@ def _save_edited_jpeg(src_clean: Path, dest: Path) -> None:
     high.save(dest, format="JPEG", quality=88, exif=exif)
 
 
+def _check_ui_fixtures() -> int:
+    """Return 0 on pass / skip, 1 on fail."""
+    fixtures = ROOT / "tests" / "fixtures"
+    edited_fx = fixtures / "ui_bet_edited.png"
+    original_fx = fixtures / "ui_bet_original.png"
+    if not (edited_fx.is_file() and original_fx.is_file()):
+        print("\n(跳过 UI 截图样张：tests/fixtures 下未找到 ui_bet_*.png)")
+        return 0
+    print("\n分析 UI 截图样张（编辑 vs 原图）…")
+    r_ui_e = analyze_image(edited_fx)
+    r_ui_o = analyze_image(original_fx)
+
+    def _summary(name: str, r) -> None:
+        print(f"\n--- {name} ---")
+        print(f"  路径: {r.path}")
+        print(f"  结论: {r.verdict}  置信度={r.confidence:.3f}  风险={r.overall_risk:.3f}")
+        for c in r.checks:
+            print(f"  [{c.name}] score={c.score:.3f}")
+            for f in c.findings[:3]:
+                print(f"      - {f}")
+
+    _summary("UI 编辑截图", r_ui_e)
+    _summary("UI 原图截图", r_ui_o)
+    ui_delta = r_ui_e.overall_risk - r_ui_o.overall_risk
+    print(f"\nUI 风险差 (edited - original) = {ui_delta:+.3f}")
+    if ui_delta < 0.15:
+        print(
+            f"错误: UI 编辑样张风险未明显高于原图（delta={ui_delta:.3f} < 0.15）",
+            file=sys.stderr,
+        )
+        return 1
+    if r_ui_e.verdict == r_ui_o.verdict == "不确定" and abs(ui_delta) < 0.05:
+        print("错误: 两张 UI 样张仍同为不确定且分数接近", file=sys.stderr)
+        return 1
+    print("断言通过: UI 编辑截图风险显著高于原图截图。")
+    return 0
+
+
 def main() -> int:
     print("=== 图像取证自检 self_check ===")
     print(f"项目根目录: {ROOT}")
@@ -146,7 +184,7 @@ def main() -> int:
 
         if ok:
             print("断言通过: 编辑图风险分高于干净图。")
-            return 0
+            return _check_ui_fixtures()
 
         print(
             "警告: 轻度编辑样本未使风险更高，尝试更明显的加工样本 …"
@@ -169,7 +207,7 @@ def main() -> int:
         _summary("重度编辑 JPEG", r_heavy)
         if r_heavy.overall_risk > r_clean.overall_risk:
             print("断言通过（重度编辑）: 编辑图风险分高于干净图。")
-            return 0
+            return _check_ui_fixtures()
 
         print(
             "已文档化: 合成样张分离失败时，请用真实「Photoshop 导出 / 局部涂改」样张验证。"
@@ -178,7 +216,7 @@ def main() -> int:
         if not (0.0 <= r_clean.overall_risk <= 1.0 and 0.0 <= r_edit.overall_risk <= 1.0):
             print("错误: 风险分超出 [0,1]", file=sys.stderr)
             return 1
-        return 0
+        return _check_ui_fixtures()
 
 
 if __name__ == "__main__":
