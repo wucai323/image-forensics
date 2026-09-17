@@ -19,6 +19,7 @@
    - **截图特征**：平坦色块 / 有限调色板 / 水平文字带，用于切换「截图模式」融合权重
    - **界面文字局部一致性**：黑色文字抗锯齿（ClearType vs 灰度）、列间 AA 不一致、邻域背景微残差（针对表格/网页截图改数字）
    - **重采样 / 双渲染痕迹**：平坦单元格内孤立高频岛、边缘振铃
+- **金额区局部编辑**：金额数字带相对邻域的局部 ELA 比值、平坦 UI 色块色度噪声抹平（针对手机银行/支付宝类 JPEG 截图改金额）
 
 ## 环境要求
 
@@ -63,7 +64,7 @@ python scripts/self_check.py
 也可：
 
 ```bat
-python -m unittest tests.test_analysis_smoke tests.test_ui_screenshot_fixtures -v
+python -m unittest tests.test_analysis_smoke tests.test_ui_screenshot_fixtures tests.test_receipt_fixtures -v
 ```
 
 ## 使用 PyInstaller 打包（Windows）
@@ -114,6 +115,7 @@ image-forensics/
   tests/
     test_analysis_smoke.py
     test_ui_screenshot_fixtures.py
+    test_receipt_fixtures.py
     fixtures/
 ```
 

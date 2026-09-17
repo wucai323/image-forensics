@@ -178,14 +178,32 @@ def check_ui_text(
 
         score = 0.0
 
+        # Mobile (Android/iOS) screenshots use grayscale AA natively — not ClearType.
+        # Only treat gray-AA dominance as suspicious for PNG/desktop exports,
+        # mixed AA strips, or when some ClearType remnants remain (partial re-render).
+        fmt = (getattr(img, "format", None) or Path(image_path).suffix.lstrip(".").upper() or "")
+        is_jpeg = fmt.upper() in ("JPEG", "JPG") or Path(image_path).suffix.lower() in (".jpg", ".jpeg")
+        uniform_mobile_aa = (
+            is_jpeg
+            and gray_aa_frac > 0.70
+            and cleartype_frac < 0.15
+            and aa_strip_std < 0.15
+        )
+
         if gray_aa_frac > 0.55 and cleartype_frac < 0.35:
-            boost = min(0.42, (gray_aa_frac - 0.55) * 0.9 + 0.18)
-            score += boost
-            findings.append(
-                f"黑色文字抗锯齿偏灰度（灰度AA占比 {gray_aa_frac:.0%}，"
-                f"ClearType 样占比 {cleartype_frac:.0%}，边缘色差均值 {fringe_mean:.1f}），"
-                "常见于截图被重采样、重绘或编辑器重导出"
-            )
+            if uniform_mobile_aa:
+                findings.append(
+                    f"JPEG 截图黑色文字为均匀灰度抗锯齿（灰度AA {gray_aa_frac:.0%}，"
+                    f"ClearType 样 {cleartype_frac:.0%}），移动端常见，不作 ClearType 缺失扣分"
+                )
+            else:
+                boost = min(0.42, (gray_aa_frac - 0.55) * 0.9 + 0.18)
+                score += boost
+                findings.append(
+                    f"黑色文字抗锯齿偏灰度（灰度AA占比 {gray_aa_frac:.0%}，"
+                    f"ClearType 样占比 {cleartype_frac:.0%}，边缘色差均值 {fringe_mean:.1f}），"
+                    "常见于截图被重采样、重绘或编辑器重导出"
+                )
         elif cleartype_frac > 0.7:
             findings.append(
                 f"黑色文字保留彩色亚像素抗锯齿（ClearType 样占比 {cleartype_frac:.0%}），"

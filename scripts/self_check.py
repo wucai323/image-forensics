@@ -143,7 +143,41 @@ def _check_ui_fixtures() -> int:
     if r_ui_e.verdict == r_ui_o.verdict == "不确定" and abs(ui_delta) < 0.05:
         print("错误: 两张 UI 样张仍同为不确定且分数接近", file=sys.stderr)
         return 1
+    
     print("断言通过: UI 编辑截图风险显著高于原图截图。")
+
+    # Mobile receipt JPEG ranking (user-labeled fixtures)
+    print("\n分析手机回单样张（真实 vs 伪造）…")
+    receipt_dir = ROOT / "tests" / "fixtures"
+    reals = [receipt_dir / f"receipt_real_{i}.jpg" for i in (1, 2, 3)]
+    fakes = [receipt_dir / f"receipt_fake_{i}.jpg" for i in (1, 2, 3)]
+    if all(p.is_file() for p in reals + fakes):
+        rr = [analyze_image(p) for p in reals]
+        fr = [analyze_image(p) for p in fakes]
+        for label, r in zip(
+            [f"real{i}" for i in (1, 2, 3)] + [f"fake{i}" for i in (1, 2, 3)],
+            rr + fr,
+        ):
+            print(f"  {label}: {r.verdict} risk={r.overall_risk:.3f}")
+        mean_gap = sum(x.overall_risk for x in fr) / 3 - sum(x.overall_risk for x in rr) / 3
+        print(f"\n回单风险差 mean(fake)-mean(real) = {mean_gap:+.3f}")
+        if mean_gap < 0.12:
+            print(f"错误: 回单伪造样张均值未明显高于真实（gap={mean_gap:.3f} < 0.12）", file=sys.stderr)
+            return 1
+        max_real = max(x.overall_risk for x in rr)
+        min_fake = min(x.overall_risk for x in fr)
+        if not (min_fake > max_real and min_fake - max_real >= 0.05):
+            print(
+                f"错误: 回单排序失败 max_real={max_real:.3f} min_fake={min_fake:.3f}",
+                file=sys.stderr,
+            )
+            return 1
+        if any(x.verdict == "可能被加工" for x in rr):
+            print("错误: 真实回单被判为可能被加工", file=sys.stderr)
+            return 1
+        print("断言通过: 伪造回单风险显著高于真实回单。")
+    else:
+        print("\n(跳过回单样张：tests/fixtures 下未找到 receipt_*.jpg)")
     return 0
 
 

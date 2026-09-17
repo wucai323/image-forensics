@@ -14,6 +14,7 @@ from app.analysis.noise_check import NoiseCheckResult, check_noise
 from app.analysis.screenshot_check import ScreenshotCheckResult, check_screenshot
 from app.analysis.ui_resample_check import UiResampleCheckResult, check_ui_resample
 from app.analysis.ui_text_check import UiTextCheckResult, check_ui_text
+from app.analysis.amount_edit_check import AmountEditCheckResult, check_amount_edit
 
 
 VERDICT_LIKELY_ORIGINAL = "可能原图"
@@ -125,19 +126,25 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
         rs_r: UiResampleCheckResult = check_ui_resample(
             path, working, screenshot_likeness=shot_r.score
         )
+        amt_r: AmountEditCheckResult = check_amount_edit(
+            path, working, screenshot_likeness=shot_r.score
+        )
 
     # Screenshot-aware fusion:
     # For UI screenshots, classic photo ELA/EXIF are weak; up-weight local
     # text AA / patch consistency and resample cues.
     if shot_r.is_screenshot or shot_r.score >= 0.50:
-        # Emphasize UI-local cues; keep a little ELA/noise for splice signals
-        w_exif, w_ela, w_noise = 0.08, 0.12, 0.12
-        w_ui, w_rs = 0.50, 0.18
-        fusion_note = "截图模式：下调 ELA/EXIF 权重，上调界面文字一致性与重采样检测"
+        # Mobile UI JPEGs: global ELA/noise fire on ALL authentic bank UIs
+        # (text vs flat panels). Emphasize amount-local + AA cues instead.
+        w_exif, w_ela, w_noise = 0.04, 0.04, 0.04
+        w_ui, w_rs, w_amt = 0.36, 0.10, 0.42
+        fusion_note = (
+            "截图模式：大幅下调全局 ELA/噪声，上调金额区局部一致性与界面文字检测"
+        )
     else:
-        w_exif, w_ela, w_noise = 0.26, 0.34, 0.28
-        w_ui, w_rs = 0.06, 0.06
-        fusion_note = "照片模式：以 EXIF / ELA / 噪声为主，界面项弱权重"
+        w_exif, w_ela, w_noise = 0.24, 0.30, 0.26
+        w_ui, w_rs, w_amt = 0.05, 0.05, 0.10
+        fusion_note = "照片模式：以 EXIF / ELA / 噪声为主，界面/金额项弱权重"
 
     overall = (
         w_exif * exif_r.score
@@ -145,7 +152,12 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
         + w_noise * noise_r.score
         + w_ui * ui_r.score
         + w_rs * rs_r.score
+        + w_amt * amt_r.score
     )
+    # Strong amount-paste evidence on screenshots should clear the tamper band
+    if (shot_r.is_screenshot or shot_r.score >= 0.50) and amt_r.score >= 0.85:
+        overall = max(overall, 0.58)
+        fusion_note += "；金额区强异常，提升综合风险"
     overall = float(max(0.0, min(1.0, overall)))
 
     verdict, confidence, explanation = _decide_verdict(overall)
@@ -211,6 +223,20 @@ def analyze_image(image_path: str | Path) -> AnalysisResult:
                 "island_rate": round(rs_r.island_rate, 3),
                 "ring_score": round(rs_r.ring_score, 3),
                 "hf_cv": round(rs_r.hf_cv, 3),
+            },
+        ),
+        CheckDetail(
+            name="金额区局部编辑痕迹",
+            score=amt_r.score,
+            findings=amt_r.findings,
+            extras={
+                "dig_neigh_ratio": round(amt_r.dig_neigh_ratio, 3),
+                "dig_ela": round(amt_r.dig_ela, 3),
+                "neigh_ela": round(amt_r.neigh_ela, 3),
+                "chroma_flat_med": round(amt_r.chroma_flat_med, 3),
+                "chroma_flat_mean": round(amt_r.chroma_flat_mean, 3),
+                "n_flat_panels": amt_r.n_flat_panels,
+                "amount_y": amt_r.amount_y,
             },
         ),
     ]
