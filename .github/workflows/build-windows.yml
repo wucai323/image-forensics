@@ -25,21 +25,16 @@ jobs:
           pip install pyinstaller==6.10.0
 
       - name: Build EXE
-        run: |
-          pyinstaller --noconfirm --clean --windowed --onefile ^
-            --name ImageForensics ^
-            --collect-all customtkinter ^
-            --hidden-import PIL._tkinter_finder ^
-            main.py
+        shell: cmd
+        run: >
+          pyinstaller --noconfirm --clean --windowed --onefile
+          --name ImageForensics
+          --collect-all customtkinter
+          --hidden-import PIL._tkinter_finder
+          main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ImageForensics-Windows
           path: dist/ImageForensics.exe
-
-      - name: Upload to Release (manual tag only)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/ImageForensics.exe
